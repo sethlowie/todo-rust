@@ -1,47 +1,79 @@
-use std::io;
+extern crate actix_web;
 
-struct Todo {
-    title: String,
-}
+use actix_web::error::ErrorForbidden;
+use actix_web::http::header;
+use actix_web::middleware::{Middleware, Started};
+use actix_web::{http, server, App, HttpRequest, Result};
+use postgres::{Connection, TlsMode};
 
-fn list_todos(todos: &Vec<Todo>) {
-    println!("\n\nHere are your todos:\n");
-    for t in todos {
-        println!("{}", t.title);
+struct Auth;
+
+impl<S> Middleware<S> for Auth {
+    fn start(&self, req: &HttpRequest<S>) -> Result<Started> {
+        match req.headers().get(header::AUTHORIZATION) {
+            Some(_auth) => Ok(Started::Done),
+            None => Err(ErrorForbidden("")),
+        }
     }
 }
 
-fn add_todo(todos: &mut Vec<Todo>, args: &[&str]) {
-    if args.len() == 0 {
-        println!("title is required");
-    } else {
-        todos.push(Todo {
-            title: args.join(" ").to_string(),
-        });
+fn handler(_req: &HttpRequest) -> &'static str {
+    "hello api"
+}
+
+fn login(_req: &HttpRequest) -> &'static str {
+    "login"
+}
+
+fn create(_req: &HttpRequest) -> &'static str {
+    run("INSERT INTO waffles (name) VALUES ('syrup')");
+    "created"
+}
+
+fn fetch(_req: &HttpRequest) -> String {
+    let conn = Connection::connect("postgres://postgres@localhost:5432", TlsMode::None)
+        .expect("Could not connect");
+
+    let mut res = "".to_owned();
+
+    for row in &conn.query("SELECT name FROM waffles", &[]).unwrap() {
+        let name: String = row.get(0);
+        res = format!("{}, {}", res, name);
     }
+
+    res
+}
+
+fn run(query: &str) {
+    let conn = Connection::connect("postgres://postgres@localhost:5432", TlsMode::None)
+        .expect("Could not connect");
+
+    conn.execute(query, &[]).expect("Could not create table");
 }
 
 fn main() {
-    println!("TODO CLI APP!");
+    // run("CREATE TABLE waffles (
+    //         name VARCHAR NOT NULL
+    //     )");
 
-    let mut todos: Vec<Todo> = Vec::new();
-
-    loop {
-        println!(">");
-        let mut cmd = String::new();
-
-        io::stdin()
-            .read_line(&mut cmd)
-            .expect("Could not read line");
-
-        let cmds = cmd.trim().split(" ").collect::<Vec<&str>>();
-
-        let (head, tail) = cmds.split_at(1);
-
-        match head[0] {
-            "ls" => list_todos(&todos),
-            "add" => add_todo(&mut todos, tail),
-            _ => println!("Command {} not found", cmd.trim()),
-        }
-    }
+    server::new(|| {
+        vec![
+            App::new()
+                .prefix("/auth")
+                .resource("/login", |r| r.f(login))
+                .resource("/test", |r| r.method(http::Method::POST).f(login))
+                .finish(),
+            App::new()
+                .middleware(Auth)
+                .prefix("/api")
+                .resource("", |r| r.f(handler))
+                .resource("/", |r| r.f(handler))
+                .resource("/create", |r| r.f(create))
+                .resource("/fetch", |r| r.f(fetch))
+                .finish(),
+        ]
+    })
+    .bind("0.0.0.0:8080")
+    .unwrap()
+    .run();
 }
