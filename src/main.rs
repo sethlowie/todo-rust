@@ -4,8 +4,9 @@ extern crate actix_web;
 
 use actix_web::error::ErrorForbidden;
 use actix_web::http::header;
-use actix_web::middleware::{Middleware, Started};
-use actix_web::{http, server, App, HttpRequest, Json, Result};
+use actix_web::http::header::HeaderValue;
+use actix_web::middleware::{Middleware, Response, Started};
+use actix_web::{http, server, App, HttpRequest, HttpResponse, Json, Result};
 use postgres::{Connection, TlsMode};
 
 struct Auth;
@@ -16,6 +17,18 @@ impl<S> Middleware<S> for Auth {
             Some(_auth) => Ok(Started::Done),
             None => Err(ErrorForbidden("")),
         }
+    }
+}
+
+struct Cors;
+
+impl<S> Middleware<S> for Cors {
+    fn response(&self, _req: &HttpRequest<S>, mut res: HttpResponse) -> Result<Response> {
+        res.headers_mut().insert(
+            "Access-Control-Allow-Origin",
+            HeaderValue::from_str("*").expect("bah"),
+        );
+        Ok(Response::Done(res))
     }
 }
 
@@ -83,7 +96,7 @@ fn main() {
                 .resource("/test", |r| r.method(http::Method::POST).f(login))
                 .finish(),
             App::new()
-                .middleware(Auth)
+                .middleware(Cors)
                 .prefix("/api")
                 .resource("", |r| r.f(handler))
                 .resource("/", |r| r.f(handler))
