@@ -1,9 +1,11 @@
+#[macro_use]
+extern crate serde_derive;
 extern crate actix_web;
 
 use actix_web::error::ErrorForbidden;
 use actix_web::http::header;
 use actix_web::middleware::{Middleware, Started};
-use actix_web::{http, server, App, HttpRequest, Result};
+use actix_web::{http, server, App, HttpRequest, Json, Result};
 use postgres::{Connection, TlsMode};
 
 struct Auth;
@@ -25,23 +27,33 @@ fn login(_req: &HttpRequest) -> &'static str {
     "login"
 }
 
-fn create(_req: &HttpRequest) -> &'static str {
-    run("INSERT INTO waffles (name) VALUES ('syrup')");
-    "created"
+fn create(todo: Json<Todo>) -> Result<String> {
+    run(&format!(
+        "INSERT INTO todos (title, description) VALUES ('{}', '{}')",
+        todo.title, todo.description
+    )
+    .to_string());
+    Ok("created".to_string())
 }
 
-fn fetch(_req: &HttpRequest) -> String {
+fn fetch(_req: &HttpRequest) -> Json<Vec<Todo>> {
     let conn = Connection::connect("postgres://postgres@localhost:5432", TlsMode::None)
         .expect("Could not connect");
 
-    let mut res = "".to_owned();
+    let mut res: Vec<Todo> = vec![];
 
-    for row in &conn.query("SELECT name FROM waffles", &[]).unwrap() {
-        let name: String = row.get(0);
-        res = format!("{}, {}", res, name);
+    for row in &conn
+        .query("SELECT title, description FROM todos", &[])
+        .unwrap()
+    {
+        let todo = Todo {
+            title: row.get(0),
+            description: row.get(1),
+        };
+        res.push(todo);
     }
 
-    res
+    Json(res)
 }
 
 fn run(query: &str) {
@@ -51,9 +63,16 @@ fn run(query: &str) {
     conn.execute(query, &[]).expect("Could not create table");
 }
 
+#[derive(Serialize, Deserialize)]
+struct Todo {
+    title: String,
+    description: String,
+}
+
 fn main() {
-    // run("CREATE TABLE waffles (
-    //         name VARCHAR NOT NULL
+    // run("CREATE TABLE todos (
+    //         title VARCHAR NOT NULL,
+    //         description VARCHAR NOT NULL
     //     )");
 
     server::new(|| {
@@ -68,7 +87,7 @@ fn main() {
                 .prefix("/api")
                 .resource("", |r| r.f(handler))
                 .resource("/", |r| r.f(handler))
-                .resource("/create", |r| r.f(create))
+                .resource("/create", |r| r.method(http::Method::POST).with(create))
                 .resource("/fetch", |r| r.f(fetch))
                 .finish(),
         ]
