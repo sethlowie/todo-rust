@@ -1,2 +1,4 @@
 /target
 **/*.rs.bk
+**/*/swp
+./app/elm-stuff/
