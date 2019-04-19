@@ -5,6 +5,7 @@ extern crate actix_web;
 use actix_web::error::ErrorForbidden;
 use actix_web::http::header;
 use actix_web::http::header::HeaderValue;
+use actix_web::middleware::cors::Cors;
 use actix_web::middleware::{Middleware, Response, Started};
 use actix_web::{http, server, App, HttpRequest, HttpResponse, Json, Result};
 use postgres::{Connection, TlsMode};
@@ -20,9 +21,9 @@ impl<S> Middleware<S> for Auth {
     }
 }
 
-struct Cors;
+struct Corse;
 
-impl<S> Middleware<S> for Cors {
+impl<S> Middleware<S> for Corse {
     fn response(&self, _req: &HttpRequest<S>, mut res: HttpResponse) -> Result<Response> {
         res.headers_mut().insert(
             "Access-Control-Allow-Origin",
@@ -40,13 +41,30 @@ fn login(_req: &HttpRequest) -> &'static str {
     "login"
 }
 
-fn create(todo: Json<Todo>) -> Result<String> {
+fn create(todo: Json<Todo>) -> Json<Vec<Todo>> {
     run(&format!(
         "INSERT INTO todos (title, description) VALUES ('{}', '{}')",
         todo.title, todo.description
     )
     .to_string());
-    Ok("created".to_string())
+
+    let conn = Connection::connect("postgres://postgres@localhost:5432", TlsMode::None)
+        .expect("Could not connect");
+
+    let mut res: Vec<Todo> = vec![];
+
+    for row in &conn
+        .query("SELECT title, description FROM todos", &[])
+        .unwrap()
+    {
+        let todo = Todo {
+            title: row.get(0),
+            description: row.get(1),
+        };
+        res.push(todo);
+    }
+
+    Json(res)
 }
 
 fn fetch(_req: &HttpRequest) -> Json<Vec<Todo>> {
@@ -83,27 +101,25 @@ struct Todo {
 }
 
 fn main() {
-    // run("CREATE TABLE todos (
-    //         title VARCHAR NOT NULL,
-    //         description VARCHAR NOT NULL
-    //     )");
+    run("CREATE TABLE todos (
+            title VARCHAR NOT NULL,
+            description VARCHAR NOT NULL
+        )");
 
     server::new(|| {
-        vec![
-            App::new()
-                .prefix("/auth")
-                .resource("/login", |r| r.f(login))
-                .resource("/test", |r| r.method(http::Method::POST).f(login))
-                .finish(),
-            App::new()
-                .middleware(Cors)
-                .prefix("/api")
+        App::new().prefix("/api").configure(|app| {
+            Cors::for_app(app) // <- Construct CORS middleware builder
+                .allowed_origin("http://localhost:8000")
+                .allowed_methods(vec!["GET", "POST", "PUT", "DELETE"])
+                .allowed_headers(vec![http::header::AUTHORIZATION, http::header::ACCEPT])
+                .allowed_header(http::header::CONTENT_TYPE)
+                .max_age(3600)
                 .resource("", |r| r.f(handler))
                 .resource("/", |r| r.f(handler))
                 .resource("/create", |r| r.method(http::Method::POST).with(create))
                 .resource("/fetch", |r| r.f(fetch))
-                .finish(),
-        ]
+                .register()
+        })
     })
     .bind("0.0.0.0:8080")
     .unwrap()
